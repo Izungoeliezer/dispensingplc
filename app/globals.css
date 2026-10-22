@@ -20,6 +20,7 @@ button.ghost{background:transparent;color:var(--brand)}button.on{background:var(
 button:disabled{opacity:.5;cursor:not-allowed}
 .grid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}.span2{grid-column:span 1}
 .item{display:grid;grid-template-columns:2.4fr 1fr 1.3fr 1fr 70px 40px;gap:8px;margin-bottom:8px}
+.span-all{grid-column:1/-1;order:9}
 .item.add{grid-template-columns:2fr 2fr 1fr auto;margin-bottom:14px}
 .picker{position:relative}
 .picker ul{position:absolute;z-index:10;left:0;right:0;top:100%;margin:2px 0 0;padding:0;list-style:none;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 6px 18px #0002;max-height:260px;overflow:auto}
