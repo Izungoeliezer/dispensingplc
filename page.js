@@ -1,106 +1,157 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
-import { supabase } from '@/lib/supabase'
+import { supabase, money, rxTotal } from '@/lib/supabase'
+import { autoQuantity, defaultDoseUnit, FREQUENCIES, DOSE_UNITS, DURATION_UNITS, isLiquid } from '@/lib/calc'
 
-function Prices() {
-  const [meds, setMeds] = useState([])
-  const [q, setQ] = useState('')
-  const [onlyZero, setOnlyZero] = useState(false)
-  const [edits, setEdits] = useState({})
-  const [nw, setNw] = useState({ name: '', strength: '', price: '' })
-  const [msg, setMsg] = useState('')
+const emptyItem = () => ({ key: Math.random(), medicine: null, q: '', doseNum: '', doseUnit: 'mg', frequency: '', durNum: '', durUnit: 'days', liquid: false })
 
-  const load = async () => {
-    // fetch in pages of 1000 (Supabase default cap)
-    const { data } = await supabase.from('medicines').select('*').order('name').range(0, 4999)
-    setMeds(data || [])
-  }
-  useEffect(() => { load() }, [])
-
-  const val = (m, k) => edits[m.id]?.[k] ?? m[k]
-  const edit = (m, k, v) => setEdits((e) => ({ ...e, [m.id]: { ...e[m.id], [k]: v } }))
-  const dirty = Object.keys(edits).length
-
-  const saveAll = async () => {
-    setMsg('Saving…')
-    for (const [id, p] of Object.entries(edits)) {
-      const patch = { ...p }
-      if ('price' in patch) patch.price = Number(patch.price || 0)
-      const { error } = await supabase.from('medicines').update(patch).eq('id', id)
-      if (error) return setMsg(error.message)
-    }
-    setEdits({}); setMsg('Saved.'); load()
-  }
-  const add = async (e) => {
-    e.preventDefault()
-    const { error } = await supabase.from('medicines').insert({ name: nw.name, strength: nw.strength, price: Number(nw.price || 0) })
-    if (error) return setMsg(error.message)
-    setNw({ name: '', strength: '', price: '' }); load()
-  }
-
-  const shown = meds.filter((m) => `${m.name} ${m.strength}`.toLowerCase().includes(q.toLowerCase()) && (!onlyZero || Number(m.price) === 0))
+function MedicinePicker({ medicines, item, onChange }) {
+  const [open, setOpen] = useState(false)
+  const matches = useMemo(() => {
+    const q = item.q.trim().toLowerCase()
+    if (!q) return []
+    return medicines.filter((m) => `${m.name} ${m.strength}`.toLowerCase().includes(q)).slice(0, 8)
+  }, [item.q, medicines])
   return (
-    <div className="card">
-      <h2>Medicines & prices</h2>
-      <form className="item add" onSubmit={add}>
-        <input placeholder="New medicine name" required value={nw.name} onChange={(e) => setNw({ ...nw, name: e.target.value })} />
-        <input placeholder="Strength / form" value={nw.strength} onChange={(e) => setNw({ ...nw, strength: e.target.value })} />
-        <input type="number" min="0" step="any" placeholder="Price" value={nw.price} onChange={(e) => setNw({ ...nw, price: e.target.value })} />
-        <button>Add</button>
-      </form>
-      <div className="bar">
-        <input placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
-        <label className="inline"><input type="checkbox" checked={onlyZero} onChange={(e) => setOnlyZero(e.target.checked)} /> Only unpriced</label>
-        <button disabled={!dirty} onClick={saveAll}>Save {dirty || ''} change{dirty === 1 ? '' : 's'}</button>
-      </div>
-      {msg && <p className="muted">{msg}</p>}
-      <p className="muted">The list came from OCR of the scanned NEML PDF – fix any wrong names/strengths here. Untick “active” to hide a medicine from prescribers.</p>
-      <table>
-        <thead><tr><th>Medicine</th><th>Strength / form</th><th>Price (TZS)</th><th>Active</th></tr></thead>
-        <tbody>
-          {shown.slice(0, 200).map((m) => (
-            <tr key={m.id}>
-              <td><input value={val(m, 'name')} onChange={(e) => edit(m, 'name', e.target.value)} /></td>
-              <td><input value={val(m, 'strength')} onChange={(e) => edit(m, 'strength', e.target.value)} /></td>
-              <td><input type="number" min="0" step="any" value={val(m, 'price')} onChange={(e) => edit(m, 'price', e.target.value)} /></td>
-              <td><input type="checkbox" checked={val(m, 'active')} onChange={(e) => edit(m, 'active', e.target.checked)} /></td>
-            </tr>
+    <div className="picker">
+      <input
+        placeholder="Search medicine…"
+        value={item.q}
+        onChange={(e) => { onChange({ q: e.target.value, medicine: null }); setOpen(true) }}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+      />
+      {open && matches.length > 0 && (
+        <ul>
+          {matches.map((m) => (
+            <li key={m.id} onMouseDown={() => { onChange({ medicine: m, q: `${m.name} — ${m.strength}` }); setOpen(false) }}>
+              {m.name} <span className="muted">{m.strength}</span>
+            </li>
           ))}
-        </tbody>
-      </table>
-      {shown.length > 200 && <p className="muted">Showing first 200 of {shown.length}; use search to narrow down.</p>}
+        </ul>
+      )}
     </div>
   )
 }
 
-function Users() {
-  const [users, setUsers] = useState([])
-  const load = async () => { const { data } = await supabase.from('profiles').select('*').order('email'); setUsers(data || []) }
-  useEffect(() => { load() }, [])
-  const update = async (u, patch) => { await supabase.from('profiles').update(patch).eq('id', u.id); load() }
+function Prescribe() {
+  const [medicines, setMedicines] = useState([])
+  const [recent, setRecent] = useState([])
+  const [f, setF] = useState({ patient_name: '', age: '', sex: '', history: '', diagnosis: '' })
+  const [items, setItems] = useState([emptyItem()])
+  const [msg, setMsg] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const loadRecent = async () => {
+    const { data } = await supabase.from('prescriptions')
+      .select('*, prescription_items(*, medicines(price))').order('created_at', { ascending: false }).limit(10)
+    setRecent(data || [])
+  }
+  useEffect(() => {
+    supabase.from('medicines').select('*').eq('active', true).order('name').limit(2000).then(({ data }) => setMedicines(data || []))
+    loadRecent()
+  }, [])
+
+  const setItem = (key, patch) => setItems((xs) => xs.map((x) => (x.key === key ? { ...x, ...patch } : x)))
+  const calcOf = (it) => (it.medicine ? autoQuantity(it, it.medicine.strength) : null)
+  const estimate = items.reduce((s, i) => s + Number(i.medicine?.price || 0) * (calcOf(i)?.qty || 0), 0)
+
+  const submit = async (e) => {
+    e.preventDefault(); setMsg(null)
+    if (items.some((i) => !i.medicine)) return setMsg({ err: true, text: 'Pick each medicine from the search list.' })
+    if (items.some((i) => !calcOf(i)?.qty)) return setMsg({ err: true, text: 'Complete dose, frequency and duration for every medicine (see the notes under each row).' })
+    setBusy(true)
+    const { error } = await supabase.rpc('create_prescription', {
+      p_patient_name: f.patient_name, p_age: f.age, p_sex: f.sex, p_history: f.history, p_diagnosis: f.diagnosis,
+      p_items: items.map((i) => {
+        const c = calcOf(i), f = FREQUENCIES.find((x) => x.label === i.frequency)
+        return {
+          medicine_id: i.medicine.id,
+          dose: `${i.doseNum} ${DOSE_UNITS.find((u) => u.value === i.doseUnit).label}`,
+          frequency: i.frequency,
+          duration: f.single ? 'Single dose' : `${i.durNum} ${i.durUnit}`,
+          quantity: c.qty,
+        }
+      }),
+    })
+    setBusy(false)
+    if (error) return setMsg({ err: true, text: error.message })
+    setMsg({ text: 'Prescription sent to the dispensary.' })
+    setF({ patient_name: '', age: '', sex: '', history: '', diagnosis: '' }); setItems([emptyItem()]); loadRecent()
+  }
+
   return (
-    <div className="card">
-      <h2>Staff accounts</h2>
-      <p className="muted">Create users in Supabase → Authentication → Users, then assign their role here.</p>
-      <table>
-        <thead><tr><th>Email</th><th>Name</th><th>Role</th></tr></thead>
-        <tbody>
-          {users.map((u) => (
-            <tr key={u.id}>
-              <td>{u.email}</td>
-              <td><input defaultValue={u.full_name || ''} onBlur={(e) => e.target.value !== u.full_name && update(u, { full_name: e.target.value })} /></td>
-              <td>
-                <select value={u.role} onChange={(e) => update(u, { role: e.target.value })}>
-                  {['pending', 'prescriber', 'dispenser', 'admin'].map((r) => <option key={r}>{r}</option>)}
+    <>
+      <form className="card" onSubmit={submit}>
+        <h2>New prescription</h2>
+        <div className="grid">
+          <label className="span2">Patient name<input required value={f.patient_name} onChange={(e) => setF({ ...f, patient_name: e.target.value })} /></label>
+          <label>Age<input value={f.age} onChange={(e) => setF({ ...f, age: e.target.value })} placeholder="e.g. 34 yrs" /></label>
+          <label>Sex<select value={f.sex} onChange={(e) => setF({ ...f, sex: e.target.value })}><option value="">—</option><option>Female</option><option>Male</option></select></label>
+        </div>
+        <label>History<textarea rows={3} value={f.history} onChange={(e) => setF({ ...f, history: e.target.value })} /></label>
+        <label>Diagnosis<textarea rows={2} required value={f.diagnosis} onChange={(e) => setF({ ...f, diagnosis: e.target.value })} /></label>
+
+        <h3>Medicines</h3>
+        <div className="item head"><span>Medicine</span><span>Dose</span><span>Frequency</span><span>Duration</span><span>Quantity</span><span /></div>
+        {items.map((it) => {
+          const c = calcOf(it)
+          const stat = FREQUENCIES.find((x) => x.label === it.frequency)?.single
+          return (
+            <div className="item" key={it.key}>
+              <MedicinePicker medicines={medicines} item={it} onChange={(p) => setItem(it.key, p.medicine ? { ...p, doseUnit: defaultDoseUnit(p.medicine.strength), liquid: isLiquid(p.medicine.strength) } : p)} />
+              <div className="pair">
+                <input type="number" min="0" step="any" placeholder="Dose" required value={it.doseNum} onChange={(e) => setItem(it.key, { doseNum: e.target.value })} />
+                <select value={it.doseUnit} onChange={(e) => setItem(it.key, { doseUnit: e.target.value })}>
+                  {DOSE_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                 </select>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+              </div>
+              <select required value={it.frequency} onChange={(e) => setItem(it.key, { frequency: e.target.value })}>
+                <option value="">Frequency…</option>
+                {FREQUENCIES.map((f) => <option key={f.label}>{f.label}</option>)}
+              </select>
+              <div className="pair">
+                <input type="number" min="1" step="any" placeholder="No." required={!stat} disabled={stat} value={stat ? '' : it.durNum} onChange={(e) => setItem(it.key, { durNum: e.target.value })} />
+                <select disabled={stat} value={it.durUnit} onChange={(e) => setItem(it.key, { durUnit: e.target.value })}>
+                  {DURATION_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                </select>
+              </div>
+              <input className="qty" readOnly tabIndex={-1} value={c?.qty ?? ''} placeholder="auto" title="Calculated automatically" />
+              <button type="button" className="ghost" disabled={items.length === 1} onClick={() => setItems((xs) => xs.filter((x) => x.key !== it.key))}>✕</button>
+              <label className="span-all inline">
+                <input type="checkbox" checked={it.liquid} onChange={(e) => setItem(it.key, { liquid: e.target.checked })} />
+                Syrup / liquid – dispense 1 bottle
+              </label>
+              {c?.error && <div className="span-all error">{c.error}</div>}
+              {c?.note && <div className="span-all muted">Auto: {c.note}</div>}
+            </div>
+          )
+        })}
+        <p className="muted">The unit in the Dose box is pre-selected from the medicine strength; change it if needed. Quantity is calculated automatically.</p>
+        <button type="button" className="ghost" onClick={() => setItems([...items, emptyItem()])}>+ Add medicine</button>
+
+        <div className="bar">
+          <span>Estimated total: <b>{money(estimate)}</b></span>
+          <button disabled={busy}>{busy ? 'Saving…' : 'Send to dispensary'}</button>
+        </div>
+        {msg && <p className={msg.err ? 'error' : 'ok'}>{msg.text}</p>}
+      </form>
+
+      <div className="card">
+        <h3>Recent prescriptions</h3>
+        {recent.length === 0 && <p className="muted">None yet.</p>}
+        {recent.map((r) => (
+          <div className="row" key={r.id}>
+            <span><b>{r.patient_name}</b> — {r.diagnosis}</span>
+            <span className="muted">{new Date(r.created_at).toLocaleString()}</span>
+            <span>{money(rxTotal(r))}</span>
+            <span className={'badge ' + r.status}>{r.status === 'dispensed' ? 'Dispensed' : 'Pending'}</span>
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 
-export default function Page() { return <Shell roles={['admin']}><Users /><Prices /></Shell> }
+export default function Page() { return <Shell roles={['prescriber', 'admin']}><Prescribe /></Shell> }

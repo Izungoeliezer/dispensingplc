@@ -60,7 +60,9 @@ const LIQUIDS = ['syrup', 'suspension', 'solution', 'drops', 'elixir', 'mixture'
 const plural = (w, n) => (n === 1 || w === 'ml' || w.endsWith('s') ? w : w + 's')
 
 // returns { qty, unitLabel, note } or { error } or null (still incomplete)
-export function autoQuantity({ doseNum, doseUnit, frequency, durNum, durUnit }, strength) {
+export const isLiquid = (strength) => LIQUIDS.includes(parseStrength(strength).word)
+
+export function autoQuantity({ doseNum, doseUnit, frequency, durNum, durUnit, liquid }, strength) {
   const n = parseFloat(doseNum), dn = parseFloat(durNum)
   const f = FREQUENCIES.find((x) => x.label === frequency)
   const du = DURATION_UNITS.find((x) => x.value === durUnit)
@@ -68,8 +70,8 @@ export function autoQuantity({ doseNum, doseUnit, frequency, durNum, durUnit }, 
   const days = f.single ? 1 : dn * du.mult
   const p = parseStrength(strength)
   const word = p.word || 'unit'
-  // oral liquids (syrup, suspension, drops...) are dispensed as one bottle, whatever the course length
-  if (LIQUIDS.includes(p.word)) {
+  // ticked "syrup / liquid": dispensed as one bottle, whatever the course length
+  if (liquid) {
     let note = `1 bottle (${n} ${doseUnit === 'unit' ? 'unit' : doseUnit} × ${f.perDay}/day × ${days} day${days === 1 ? '' : 's'})`
     if (doseUnit === 'ml') note = `1 bottle (${n} ml × ${f.perDay}/day × ${days} day${days === 1 ? '' : 's'} = ${+(n * f.perDay * days).toFixed(1)} ml needed)`
     return { qty: 1, unitLabel: 'bottle', note }
