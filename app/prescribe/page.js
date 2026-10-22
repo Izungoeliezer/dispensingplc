@@ -2,9 +2,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import Shell from '@/components/Shell'
 import { supabase, money, rxTotal } from '@/lib/supabase'
+import { autoQuantity, defaultDoseUnit, FREQUENCIES, DOSE_UNITS, DURATION_UNITS } from '@/lib/calc'
 
-const FREQS = ['Once daily (OD)', 'Twice daily (BD)', 'Three times daily (TDS)', 'Four times daily (QID)', 'At night (Nocte)', 'Every 8 hours', 'Every 12 hours', 'As needed (PRN)', 'Single dose (STAT)']
-const emptyItem = () => ({ key: Math.random(), medicine: null, q: '', dose: '', frequency: '', duration: '', quantity: 1 })
+const emptyItem = () => ({ key: Math.random(), medicine: null, q: '', doseNum: '', doseUnit: 'mg', frequency: '', durNum: '', durUnit: 'days' })
 
 function MedicinePicker({ medicines, item, onChange }) {
   const [open, setOpen] = useState(false)
@@ -54,15 +54,26 @@ function Prescribe() {
   }, [])
 
   const setItem = (key, patch) => setItems((xs) => xs.map((x) => (x.key === key ? { ...x, ...patch } : x)))
-  const estimate = items.reduce((s, i) => s + Number(i.medicine?.price || 0) * Number(i.quantity || 0), 0)
+  const calcOf = (it) => (it.medicine ? autoQuantity(it, it.medicine.strength) : null)
+  const estimate = items.reduce((s, i) => s + Number(i.medicine?.price || 0) * (calcOf(i)?.qty || 0), 0)
 
   const submit = async (e) => {
     e.preventDefault(); setMsg(null)
     if (items.some((i) => !i.medicine)) return setMsg({ err: true, text: 'Pick each medicine from the search list.' })
+    if (items.some((i) => !calcOf(i)?.qty)) return setMsg({ err: true, text: 'Complete dose, frequency and duration for every medicine (see the notes under each row).' })
     setBusy(true)
     const { error } = await supabase.rpc('create_prescription', {
       p_patient_name: f.patient_name, p_age: f.age, p_sex: f.sex, p_history: f.history, p_diagnosis: f.diagnosis,
-      p_items: items.map((i) => ({ medicine_id: i.medicine.id, dose: i.dose, frequency: i.frequency, duration: i.duration, quantity: i.quantity })),
+      p_items: items.map((i) => {
+        const c = calcOf(i), f = FREQUENCIES.find((x) => x.label === i.frequency)
+        return {
+          medicine_id: i.medicine.id,
+          dose: `${i.doseNum} ${DOSE_UNITS.find((u) => u.value === i.doseUnit).label}`,
+          frequency: i.frequency,
+          duration: f.single ? 'Single dose' : `${i.durNum} ${i.durUnit}`,
+          quantity: c.qty,
+        }
+      }),
     })
     setBusy(false)
     if (error) return setMsg({ err: true, text: error.message })
@@ -83,18 +94,37 @@ function Prescribe() {
         <label>Diagnosis<textarea rows={2} required value={f.diagnosis} onChange={(e) => setF({ ...f, diagnosis: e.target.value })} /></label>
 
         <h3>Medicines</h3>
-        {items.map((it) => (
-          <div className="item" key={it.key}>
-            <MedicinePicker medicines={medicines} item={it} onChange={(p) => setItem(it.key, p)} />
-            <input placeholder="Dose (e.g. 500mg)" required value={it.dose} onChange={(e) => setItem(it.key, { dose: e.target.value })} />
-            <input list="freqs" placeholder="Frequency" required value={it.frequency} onChange={(e) => setItem(it.key, { frequency: e.target.value })} />
-            <input placeholder="Duration (e.g. 5 days)" required value={it.duration} onChange={(e) => setItem(it.key, { duration: e.target.value })} />
-            <input type="number" min="1" step="any" title="Total quantity to dispense" required value={it.quantity} onChange={(e) => setItem(it.key, { quantity: e.target.value })} />
-            <button type="button" className="ghost" disabled={items.length === 1} onClick={() => setItems((xs) => xs.filter((x) => x.key !== it.key))}>✕</button>
-          </div>
-        ))}
-        <datalist id="freqs">{FREQS.map((x) => <option key={x} value={x} />)}</datalist>
-        <p className="muted">Fields: medicine · dose · frequency · duration · total quantity to dispense</p>
+        <div className="item head"><span>Medicine</span><span>Dose</span><span>Frequency</span><span>Duration</span><span>Quantity</span><span /></div>
+        {items.map((it) => {
+          const c = calcOf(it)
+          const stat = FREQUENCIES.find((x) => x.label === it.frequency)?.single
+          return (
+            <div className="item" key={it.key}>
+              <MedicinePicker medicines={medicines} item={it} onChange={(p) => setItem(it.key, p.medicine ? { ...p, doseUnit: defaultDoseUnit(p.medicine.strength) } : p)} />
+              <div className="pair">
+                <input type="number" min="0" step="any" placeholder="Dose" required value={it.doseNum} onChange={(e) => setItem(it.key, { doseNum: e.target.value })} />
+                <select value={it.doseUnit} onChange={(e) => setItem(it.key, { doseUnit: e.target.value })}>
+                  {DOSE_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                </select>
+              </div>
+              <select required value={it.frequency} onChange={(e) => setItem(it.key, { frequency: e.target.value })}>
+                <option value="">Frequency…</option>
+                {FREQUENCIES.map((f) => <option key={f.label}>{f.label}</option>)}
+              </select>
+              <div className="pair">
+                <input type="number" min="1" step="any" placeholder="No." required={!stat} disabled={stat} value={stat ? '' : it.durNum} onChange={(e) => setItem(it.key, { durNum: e.target.value })} />
+                <select disabled={stat} value={it.durUnit} onChange={(e) => setItem(it.key, { durUnit: e.target.value })}>
+                  {DURATION_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
+                </select>
+              </div>
+              <input className="qty" readOnly tabIndex={-1} value={c?.qty ?? ''} placeholder="auto" title="Calculated automatically" />
+              <button type="button" className="ghost" disabled={items.length === 1} onClick={() => setItems((xs) => xs.filter((x) => x.key !== it.key))}>✕</button>
+              {c?.error && <div className="span-all error">{c.error}</div>}
+              {c?.note && <div className="span-all muted">Auto: {c.note}</div>}
+            </div>
+          )
+        })}
+        <p className="muted">The unit in the Dose box is pre-selected from the medicine strength; change it if needed. Quantity is calculated automatically.</p>
         <button type="button" className="ghost" onClick={() => setItems([...items, emptyItem()])}>+ Add medicine</button>
 
         <div className="bar">
