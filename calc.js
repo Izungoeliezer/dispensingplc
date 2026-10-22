@@ -33,7 +33,7 @@ const MG = { mcg: 0.001, µg: 0.001, ug: 0.001, mg: 1, g: 1000, gm: 1000, gms: 1
 //  { kind:'none', word }             no usable number     -> dose is entered as tablets/units
 export function parseStrength(strength) {
   const s = strength || ''
-  const word = (s.match(/\b(tablet|capsule|ampoule|vial|sachet|suppository|pessary|cream|ointment|injection|syrup|suspension|solution|drops|inhaler)/i)?.[1] || '').toLowerCase()
+  const word = (s.match(/\b(tablet|capsule|ampoule|vial|sachet|suppository|pessary|cream|ointment|injection|syrup|suspension|solution|drops|elixir|mixture|emulsion|inhaler)/i)?.[1] || '').toLowerCase()
   const conc = s.match(/(\d+(?:\.\d+)?)\s*(mcg|µg|ug|mg|g)\s*\/\s*(\d+(?:\.\d+)?)?\s*(ml|l)\b/i)
   if (conc) {
     let ml = parseFloat(conc[3] || '1'); if (conc[4].toLowerCase() === 'l') ml *= 1000
@@ -56,6 +56,7 @@ export function defaultDoseUnit(strength) {
   return 'unit'
 }
 
+const LIQUIDS = ['syrup', 'suspension', 'solution', 'drops', 'elixir', 'mixture', 'emulsion']
 const plural = (w, n) => (n === 1 || w === 'ml' || w.endsWith('s') ? w : w + 's')
 
 // returns { qty, unitLabel, note } or { error } or null (still incomplete)
@@ -67,6 +68,12 @@ export function autoQuantity({ doseNum, doseUnit, frequency, durNum, durUnit }, 
   const days = f.single ? 1 : dn * du.mult
   const p = parseStrength(strength)
   const word = p.word || 'unit'
+  // oral liquids (syrup, suspension, drops...) are dispensed as one bottle, whatever the course length
+  if (LIQUIDS.includes(p.word)) {
+    let note = `1 bottle (${n} ${doseUnit === 'unit' ? 'unit' : doseUnit} × ${f.perDay}/day × ${days} day${days === 1 ? '' : 's'})`
+    if (doseUnit === 'ml') note = `1 bottle (${n} ml × ${f.perDay}/day × ${days} day${days === 1 ? '' : 's'} = ${+(n * f.perDay * days).toFixed(1)} ml needed)`
+    return { qty: 1, unitLabel: 'bottle', note }
+  }
   let per, unitLabel, desc
   if (doseUnit === 'unit') {
     per = n; unitLabel = word; desc = `${n} ${plural(word, n)}`
