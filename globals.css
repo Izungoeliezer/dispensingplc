@@ -41,3 +41,6 @@ td input{padding:4px 6px}tfoot td{border:0;text-align:right}
 .item input.qty{background:#f1f5f9;font-weight:700;text-align:center}
 .item{align-items:start}
 @media(max-width:800px){.item.head{display:none}}
+.chips{display:flex;flex-direction:column;gap:6px;margin:-2px 0 12px}
+.chip{display:flex;gap:8px;align-items:center;background:#e6f4f2;border-radius:6px;padding:6px 10px}
+.chip button{margin-left:auto;padding:0 6px;background:transparent;color:var(--bad);border:0}

@@ -35,10 +35,58 @@ function MedicinePicker({ medicines, item, onChange }) {
   )
 }
 
+function DiagnosisPicker({ value, onChange }) {
+  const [q, setQ] = useState('')
+  const [res, setRes] = useState([])
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    const term = q.replace(/[,()%*\\]/g, ' ').trim()
+    if (term.length < 2) { setRes([]); return }
+    const t = setTimeout(async () => {
+      let query = supabase.from('icd10_codes').select('code, description').limit(15)
+      if (/^[a-z]\d/i.test(term)) query = query.ilike('code', term.replace(/\s+/g, '') + '%').order('code')
+      else for (const w of term.split(/\s+/)) query = query.ilike('description', `%${w}%`)
+      const { data } = await query
+      setRes(data || [])
+    }, 250)
+    return () => clearTimeout(t)
+  }, [q])
+
+  const add = (d) => { if (!value.some((v) => v.code === d.code)) onChange([...value, d]); setQ(''); setRes([]) }
+  return (
+    <div className="dx">
+      <label>Diagnosis (ICD-10) – search by name or code
+        <div className="picker">
+          <input placeholder="e.g. malaria, J06, pneumonia…" value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }}
+            onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
+          {open && res.length > 0 && (
+            <ul>
+              {res.map((d) => (
+                <li key={d.code} onMouseDown={() => add(d)}><b>{d.code}</b> {d.description}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </label>
+      <div className="chips">
+        {value.map((d) => (
+          <span className="chip" key={d.code}>
+            <b>{d.code}</b> {d.description}
+            <button type="button" onClick={() => onChange(value.filter((v) => v.code !== d.code))}>✕</button>
+          </span>
+        ))}
+        {value.length === 0 && <span className="muted">No diagnosis added yet.</span>}
+      </div>
+    </div>
+  )
+}
+
 function Prescribe() {
   const [medicines, setMedicines] = useState([])
   const [recent, setRecent] = useState([])
-  const [f, setF] = useState({ patient_name: '', age: '', sex: '', history: '', diagnosis: '' })
+  const [f, setF] = useState({ patient_name: '', age: '', sex: '', history: '' })
+  const [dx, setDx] = useState([])
   const [items, setItems] = useState([emptyItem()])
   const [msg, setMsg] = useState(null)
   const [busy, setBusy] = useState(false)
@@ -59,11 +107,12 @@ function Prescribe() {
 
   const submit = async (e) => {
     e.preventDefault(); setMsg(null)
+    if (dx.length === 0) return setMsg({ err: true, text: 'Add at least one ICD-10 diagnosis.' })
     if (items.some((i) => !i.medicine)) return setMsg({ err: true, text: 'Pick each medicine from the search list.' })
     if (items.some((i) => !calcOf(i)?.qty)) return setMsg({ err: true, text: 'Complete dose, frequency and duration for every medicine (see the notes under each row).' })
     setBusy(true)
     const { error } = await supabase.rpc('create_prescription', {
-      p_patient_name: f.patient_name, p_age: f.age, p_sex: f.sex, p_history: f.history, p_diagnosis: f.diagnosis,
+      p_patient_name: f.patient_name, p_age: f.age, p_sex: f.sex, p_history: f.history, p_diagnosis: dx.map((d) => `${d.code} – ${d.description}`).join('; '),
       p_items: items.map((i) => {
         const c = calcOf(i), f = FREQUENCIES.find((x) => x.label === i.frequency)
         return {
@@ -78,7 +127,7 @@ function Prescribe() {
     setBusy(false)
     if (error) return setMsg({ err: true, text: error.message })
     setMsg({ text: 'Prescription sent to the dispensary.' })
-    setF({ patient_name: '', age: '', sex: '', history: '', diagnosis: '' }); setItems([emptyItem()]); loadRecent()
+    setF({ patient_name: '', age: '', sex: '', history: '' }); setItems([emptyItem()]); setDx([]); loadRecent()
   }
 
   return (
@@ -91,7 +140,7 @@ function Prescribe() {
           <label>Sex<select value={f.sex} onChange={(e) => setF({ ...f, sex: e.target.value })}><option value="">—</option><option>Female</option><option>Male</option></select></label>
         </div>
         <label>History<textarea rows={3} value={f.history} onChange={(e) => setF({ ...f, history: e.target.value })} /></label>
-        <label>Diagnosis<textarea rows={2} required value={f.diagnosis} onChange={(e) => setF({ ...f, diagnosis: e.target.value })} /></label>
+        <DiagnosisPicker value={dx} onChange={setDx} />
 
         <h3>Medicines</h3>
         <div className="item head"><span>Medicine</span><span>Dose</span><span>Frequency</span><span>Duration</span><span>Quantity</span><span /></div>
