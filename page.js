@@ -70,7 +70,7 @@ function Prescribe() {
           medicine_id: i.medicine.id,
           dose: `${i.doseNum} ${DOSE_UNITS.find((u) => u.value === i.doseUnit).label}`,
           frequency: i.frequency,
-          duration: f.single ? 'Single dose' : `${i.durNum} ${i.durUnit}`,
+          duration: f?.single ? 'Single dose' : i.durNum ? `${i.durNum} ${i.durUnit}` : '',
           quantity: c.qty,
         }
       }),
@@ -107,12 +107,12 @@ function Prescribe() {
                   {DOSE_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                 </select>
               </div>
-              <select required value={it.frequency} onChange={(e) => setItem(it.key, { frequency: e.target.value })}>
+              <select required={!it.liquid} value={it.frequency} onChange={(e) => setItem(it.key, { frequency: e.target.value })}>
                 <option value="">Frequency…</option>
                 {FREQUENCIES.map((f) => <option key={f.label}>{f.label}</option>)}
               </select>
               <div className="pair">
-                <input type="number" min="1" step="any" placeholder="No." required={!stat} disabled={stat} value={stat ? '' : it.durNum} onChange={(e) => setItem(it.key, { durNum: e.target.value })} />
+                <input type="number" min="1" step="any" placeholder="No." required={!stat && !it.liquid} disabled={stat} value={stat ? '' : it.durNum} onChange={(e) => setItem(it.key, { durNum: e.target.value })} />
                 <select disabled={stat} value={it.durUnit} onChange={(e) => setItem(it.key, { durUnit: e.target.value })}>
                   {DURATION_UNITS.map((u) => <option key={u.value} value={u.value}>{u.label}</option>)}
                 </select>
@@ -121,7 +121,7 @@ function Prescribe() {
               <button type="button" className="ghost" disabled={items.length === 1} onClick={() => setItems((xs) => xs.filter((x) => x.key !== it.key))}>✕</button>
               <label className="span-all inline">
                 <input type="checkbox" checked={it.liquid} onChange={(e) => setItem(it.key, { liquid: e.target.checked })} />
-                Syrup / liquid – dispense 1 bottle
+                Syrup / suspension – quantity stays 1 bottle (only the dose is required)
               </label>
               {c?.error && <div className="span-all error">{c.error}</div>}
               {c?.note && <div className="span-all muted">Auto: {c.note}</div>}

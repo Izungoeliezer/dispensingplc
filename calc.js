@@ -64,18 +64,24 @@ export const isLiquid = (strength) => LIQUIDS.includes(parseStrength(strength).w
 
 export function autoQuantity({ doseNum, doseUnit, frequency, durNum, durUnit, liquid }, strength) {
   const n = parseFloat(doseNum), dn = parseFloat(durNum)
+  if (!(n > 0)) return null
+  // ticked "syrup / suspension": always 1 bottle; only the dose is needed
+  if (liquid) {
+    const f0 = FREQUENCIES.find((x) => x.label === frequency)
+    const du0 = DURATION_UNITS.find((x) => x.value === durUnit)
+    let note = '1 bottle'
+    if (doseUnit === 'ml' && f0 && du0 && (f0.single || dn > 0)) {
+      const days0 = f0.single ? 1 : dn * du0.mult
+      note = `1 bottle (${n} ml × ${f0.perDay}/day × ${days0} day${days0 === 1 ? '' : 's'} = ${+(n * f0.perDay * days0).toFixed(1)} ml needed)`
+    }
+    return { qty: 1, unitLabel: 'bottle', note }
+  }
   const f = FREQUENCIES.find((x) => x.label === frequency)
   const du = DURATION_UNITS.find((x) => x.value === durUnit)
-  if (!(n > 0) || !f || !du || (!f.single && !(dn > 0))) return null
+  if (!f || !du || (!f.single && !(dn > 0))) return null
   const days = f.single ? 1 : dn * du.mult
   const p = parseStrength(strength)
   const word = p.word || 'unit'
-  // ticked "syrup / liquid": dispensed as one bottle, whatever the course length
-  if (liquid) {
-    let note = `1 bottle (${n} ${doseUnit === 'unit' ? 'unit' : doseUnit} × ${f.perDay}/day × ${days} day${days === 1 ? '' : 's'})`
-    if (doseUnit === 'ml') note = `1 bottle (${n} ml × ${f.perDay}/day × ${days} day${days === 1 ? '' : 's'} = ${+(n * f.perDay * days).toFixed(1)} ml needed)`
-    return { qty: 1, unitLabel: 'bottle', note }
-  }
   let per, unitLabel, desc
   if (doseUnit === 'unit') {
     per = n; unitLabel = word; desc = `${n} ${plural(word, n)}`
