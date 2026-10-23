@@ -38,34 +38,46 @@ function MedicinePicker({ medicines, item, onChange }) {
 function DiagnosisPicker({ value, onChange }) {
   const [q, setQ] = useState('')
   const [res, setRes] = useState([])
+  const [searched, setSearched] = useState(false)
   const [open, setOpen] = useState(false)
+  const [hi, setHi] = useState(0)
 
   useEffect(() => {
     const term = q.replace(/[,()%*\\]/g, ' ').trim()
+    setSearched(false)
     if (term.length < 2) { setRes([]); return }
     const t = setTimeout(async () => {
       let query = supabase.from('icd10_codes').select('code, description').limit(15)
       if (/^[a-z]\d/i.test(term)) query = query.ilike('code', term.replace(/\s+/g, '') + '%').order('code')
       else for (const w of term.split(/\s+/)) query = query.ilike('description', `%${w}%`)
       const { data } = await query
-      setRes(data || [])
+      setRes(data || []); setHi(0); setSearched(true)
     }, 250)
     return () => clearTimeout(t)
   }, [q])
 
-  const add = (d) => { if (!value.some((v) => v.code === d.code)) onChange([...value, d]); setQ(''); setRes([]) }
+  const add = (d) => { if (d && !value.some((v) => v.code === d.code)) onChange([...value, d]); setQ(''); setRes([]) }
+  const onKey = (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, res.length - 1)) }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)) }
+    else if (e.key === 'Enter') { e.preventDefault(); add(res[hi]) }  // only a listed ICD-10 entry can be added
+  }
   return (
     <div className="dx">
-      <label>Diagnosis (ICD-10) – search by name or code
+      <label>Diagnosis (ICD-10) – type a code or name, then choose from the list
         <div className="picker">
-          <input placeholder="e.g. malaria, J06, pneumonia…" value={q} onChange={(e) => { setQ(e.target.value); setOpen(true) }}
+          <input placeholder="e.g. malaria, J06, pneumonia…" value={q} autoComplete="off"
+            onChange={(e) => { setQ(e.target.value); setOpen(true) }} onKeyDown={onKey}
             onFocus={() => setOpen(true)} onBlur={() => setTimeout(() => setOpen(false), 150)} />
           {open && res.length > 0 && (
             <ul>
-              {res.map((d) => (
-                <li key={d.code} onMouseDown={() => add(d)}><b>{d.code}</b> {d.description}</li>
+              {res.map((d, i) => (
+                <li key={d.code} className={i === hi ? 'hi' : ''} onMouseDown={() => add(d)}><b>{d.code}</b> {d.description}</li>
               ))}
             </ul>
+          )}
+          {open && searched && res.length === 0 && (
+            <ul><li className="muted">No matching ICD-10 diagnosis. Only diagnoses from the ICD-10 list can be used.</li></ul>
           )}
         </div>
       </label>
@@ -112,7 +124,7 @@ function Prescribe() {
     if (items.some((i) => !calcOf(i)?.qty)) return setMsg({ err: true, text: 'Complete dose, frequency and duration for every medicine (see the notes under each row).' })
     setBusy(true)
     const { error } = await supabase.rpc('create_prescription', {
-      p_patient_name: f.patient_name, p_age: f.age, p_sex: f.sex, p_history: f.history, p_diagnosis: dx.map((d) => `${d.code} – ${d.description}`).join('; '),
+      p_patient_name: f.patient_name, p_age: f.age, p_sex: f.sex, p_history: f.history, p_diagnoses: dx.map((d) => d.code),
       p_items: items.map((i) => {
         const c = calcOf(i), f = FREQUENCIES.find((x) => x.label === i.frequency)
         return {
